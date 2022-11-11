@@ -2,7 +2,8 @@ use std::{
     cmp::max,
     fmt::{Debug, Display},
     fs::{self, File},
-    io::Write, time::Instant,
+    io::Write,
+    time::Instant,
 };
 
 use anyhow::{bail, Result};
@@ -77,44 +78,52 @@ fn next_free_letter(filter: u32) -> Option<usize> {
     (0..26).rev().filter(|n| filter & (1 << n) == 0).next()
 }
 
-fn solve(words: &[Vec<Word>; 26]) -> Vec<[Word; 5]> {
+fn solve(words: &[Vec<Word>; 26], filter: u32, skipped: bool, i: usize) -> Vec<[Word; 5]> {
     let mut solutions = Vec::new();
-    for word in words[25].iter() {
-        for mut solution in solve14(words, word.bitword, false, 1) {
-            solution[0] = word.clone();
-            solutions.push(solution);
-        }
-    }
-    for word in words[24].iter() {
-        for mut solution in solve14(words, word.bitword | 1 << 25, true, 1) {
-            solution[0] = word.clone();
-            solutions.push(solution);
-        }
-    }
-    solutions
-}
-
-// the separation of solve and solve14 cuts execution time in half
-fn solve14(words: &[Vec<Word>; 26], filter: u32, skipped: bool, i: usize) -> Vec<[Word; 5]> {
-    let mut solutions = Vec::new();
-    let letter = next_free_letter(filter).unwrap();
-    for word in words[letter].iter() {
-        if word.bitword & filter == 0 {
-            if i == 4 {
-                let mut solution: [Word; 5] = Default::default();
-                solution[4] = word.clone();
-                solutions.push(solution);
-            } else {
-                for mut solution in solve14(words, filter | word.bitword, false, i + 1) {
-                    solution[i] = word.clone();
+    match i {
+        0 => {
+            for word in words[25].iter() {
+                for mut solution in solve(words, word.bitword, false, 1) {
+                    solution[0] = word.clone();
+                    solutions.push(solution);
+                }
+            }
+            for word in words[24].iter() {
+                for mut solution in solve(words, word.bitword | 1 << 25, true, 1) {
+                    solution[0] = word.clone();
                     solutions.push(solution);
                 }
             }
         }
-    }
-    if !skipped {
-        solutions.append(&mut solve14(words, filter | 1 << letter, true, i));
-    }
+
+        4 => {
+            let letter = next_free_letter(filter).unwrap();
+            for word in words[letter].iter() {
+                if word.bitword & filter == 0 {
+                    let mut solution: [Word; 5] = Default::default();
+                    solution[4] = word.clone();
+                    solutions.push(solution);
+                }
+            }
+            if !skipped {
+                solutions.append(&mut solve(words, filter | 1 << letter, true, 4));
+            }
+        }
+        _ => {
+            let letter = next_free_letter(filter).unwrap();
+            for word in words[letter].iter() {
+                if word.bitword & filter == 0 {
+                    for mut solution in solve(words, filter | word.bitword, false, i + 1) {
+                        solution[i] = word.clone();
+                        solutions.push(solution);
+                    }
+                }
+            }
+            if !skipped {
+                solutions.append(&mut solve(words, filter | 1 << letter, true, i));
+            }
+        }
+    };
     solutions
 }
 
@@ -123,7 +132,7 @@ fn main() -> Result<()> {
 
     let bytes = fs::read("words_alpha.txt")?;
     let words = words(&bytes);
-    let solutions = solve(&words);
+    let solutions = solve(&words, 0, false, 0);
 
     let mut output = File::create("solution.txt")?;
     for s in &solutions {
