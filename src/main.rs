@@ -67,18 +67,16 @@ impl Display for Word {
 }
 
 fn words(bytes: &[u8]) -> [Vec<Word>; 26] {
-    let mut words: Vec<Word> = bytes
+    let words: Vec<Word> = bytes
         .split(|b| *b == b'\n') // split on \n
         .map(|s| match s.last() {
             Some(b'\r') => &s[0..s.len() - 1], // strip \r
             _ => s,
         })
         .filter_map(|line| Word::new(line).ok())
+        .sorted_unstable() // sort for dedup
+        .dedup() // remove anagrams
         .collect();
-
-    // remove anagrams
-    words.sort_unstable();
-    words.dedup();
 
     let mut freqs = [0; 26];
     for word in &words {
