@@ -7,6 +7,7 @@ use std::{
 };
 
 use anyhow::{bail, Result};
+use itertools::Itertools;
 
 #[derive(Eq, PartialOrd, Ord, Clone, Default)]
 struct Word {
@@ -15,26 +16,35 @@ struct Word {
 }
 
 impl Word {
-    fn new(bytes: &[u8]) -> Result<(u8, Word)> {
+    fn new(bytes: &[u8]) -> Result<Word> {
         let bytes: [u8; 5] = bytes.try_into()?;
         let mut bitword = 0;
         let mut len = 0;
-        let mut msl = 0; // most significant letter
         for letter in bytes.iter().cloned() {
             if letter < b'a' && letter > b'z' {
                 bail!("invalid letter {letter}")
             }
             let offset = letter - b'a';
-            msl = max(msl, offset);
             if bitword & (1 << offset) == 0 {
                 bitword |= 1 << offset;
                 len += 1
             }
         }
         match len {
-            5 => Ok((msl, Word { bitword, bytes })),
+            5 => Ok(Word { bitword, bytes }),
             _ => bail!("invalid bitword length {len}"),
         }
+    }
+
+    fn transform(mut self, t: [usize; 26]) -> (usize, Self) {
+        let mut msl = 0; // most significant letter
+        self.bitword = 0;
+        for letter in self.bytes.iter().cloned() {
+            let offset = t[(letter - b'a') as usize];
+            msl = max(msl, offset);
+            self.bitword |= 1 << offset;
+        }
+        (msl, self)
     }
 }
 
@@ -57,21 +67,46 @@ impl Display for Word {
 }
 
 fn words(bytes: &[u8]) -> [Vec<Word>; 26] {
-    let mut words: [Vec<Word>; 26] = Default::default();
-    let lines = bytes.split(|b| *b == b'\n').map(|s| match s.last() {
-        Some(b'\r') => &s[0..s.len() - 1],
-        _ => s,
-    });
-    for line in lines {
-        if let Ok((msl, word)) = Word::new(line) {
-            words[msl as usize].push(word)
+    let mut words: Vec<Word> = bytes
+        .split(|b| *b == b'\n') // split on \n
+        .map(|s| match s.last() {
+            Some(b'\r') => &s[0..s.len() - 1], // strip \r
+            _ => s,
+        })
+        .filter_map(|line| Word::new(line).ok())
+        .collect();
+
+    // remove anagrams
+    words.sort_unstable();
+    words.dedup();
+
+    let mut freqs = [0; 26];
+    for word in &words {
+        for b in word.bytes {
+            freqs[(b - b'a') as usize] += 1;
         }
     }
-    for word_group in &mut words {
-        word_group.sort();
-        word_group.dedup();
+
+    // create transform where least frequent letter is 25, second least 24, ..., most frequent 0
+    let transform: [usize; 26] = freqs
+        .iter()
+        .enumerate()
+        .sorted_unstable_by_key(|(_i, f)| *f)
+        .rev()
+        .map(|(i, _f)| i) // letters now in sorted order from most to least frequent
+        .enumerate()
+        .sorted_unstable_by_key(|(_i_transformed, i_letter)| *i_letter) // sort again, s.t. the letter corresponds with index in transform
+        .map(|(i_transformed, _i_letter)| i_transformed)
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap();
+
+    let mut indexed_words: [Vec<Word>; 26] = Default::default();
+    for word in words {
+        let (msl, word) = word.transform(transform);
+        indexed_words[msl].push(word);
     }
-    words
+    indexed_words
 }
 
 fn next_free_letter(filter: u32) -> Option<usize> {
@@ -109,7 +144,7 @@ fn solve(words: &[Vec<Word>; 26], filter: u32, skipped: bool, i: usize) -> Vec<[
                 solutions.append(&mut solve(words, filter | 1 << letter, true, 4));
             }
         }
-        
+
         _ => {
             let letter = next_free_letter(filter).unwrap();
             for word in words[letter].iter() {
