@@ -1,79 +1,117 @@
-use std::{collections::HashSet, fmt, fs::read_to_string};
+use std::{
+    cmp::max,
+    fmt::{Debug, Display},
+    fs,
+};
 
-use anyhow::{bail, Error, Result};
+use anyhow::{bail, Result};
 
-#[derive(PartialEq, Eq, Hash)]
-struct Word(u32);
-
-fn bit_to_char(b: u8) -> char {
-    (b + 97) as char
-}
-
-fn char_to_bit(c: char) -> Result<u8> {
-    if c.is_ascii_alphabetic() {
-        Ok(c.to_ascii_lowercase() as u8 - 97)
-    } else {
-        bail!("non-ascii char {c}")
-    }
+#[derive(Eq, PartialOrd, Ord, Clone, Default)]
+struct Word {
+    bitword: u32,
+    bytes: [u8; 5],
 }
 
 impl Word {
-    fn len(&self) -> usize {
-        let (mut n, mut len) = (self.0, 0);
-        while n != 0 {
-            if n & 1 == 1 {
-                len += 1;
+    fn new(bytes: &[u8]) -> Result<(u8, Word)> {
+        let bytes: [u8; 5] = bytes.try_into()?;
+        let mut bitword = 0;
+        let mut len = 0;
+        let mut msl = 0; // most significant letter
+        for letter in bytes.iter().cloned() {
+            if letter < b'a' && letter > b'z' {
+                bail!("invalid letter {letter}")
             }
-            n >>= 1;
-        }
-        return len;
-    }
-}
-
-impl fmt::Debug for Word {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:#b}", self.0)
-    }
-}
-
-impl fmt::Display for Word {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut n: u32 = self.0;
-        let mut i: u8 = 0;
-        while n != 0 {
-            if n & 1 == 1 {
-                write!(f, "{}", (bit_to_char(i).to_string()))?
+            let offset = letter - b'a';
+            msl = max(msl, offset);
+            if bitword & (1 << offset) == 0 {
+                bitword |= 1 << offset;
+                len += 1
             }
-            n >>= 1;
-            i += 1;
         }
-        Ok(())
+        match len {
+            5 => Ok((msl, Word { bitword, bytes })),
+            _ => bail!("invalid bitword length {len}"),
+        }
     }
 }
 
-impl TryFrom<&str> for Word {
-    type Error = Error;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        let mut word = 0;
-        for c in value.chars() {
-            word |= 1 << char_to_bit(c)?;
-        }
-        Ok(Word(word))
+impl PartialEq for Word {
+    fn eq(&self, other: &Self) -> bool {
+        self.bitword == other.bitword
     }
 }
 
-fn words_from_file(filepath: &str) -> Result<HashSet<Word>> {
-    Ok(read_to_string(filepath)?
-        .lines()
-        .filter(|x| x.len() == 5)
-        .filter_map(|x| Word::try_from(x).ok())
-        .filter(|x| x.len() == 5)
-        .collect())
+impl Debug for Word {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:#b} {self}", self.bitword)
+    }
+}
+
+impl Display for Word {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&String::from_utf8_lossy(&self.bytes))
+    }
+}
+
+fn words(bytes: &[u8]) -> [Vec<Word>; 26] {
+    let mut words: [Vec<Word>; 26] = Default::default();
+    let lines = bytes.split(|b| *b == b'\n').map(|s| match s.last() {
+        Some(b'\r') => &s[0..s.len() - 1],
+        _ => s,
+    });
+
+    for line in lines {
+        if let Ok((msl, word)) = Word::new(line) {
+            words[msl as usize].push(word)
+        }
+    }
+
+    for word_group in &mut words {
+        word_group.sort();
+        word_group.dedup();
+    }
+    words
+}
+
+fn next_free_letter(filter: u32) -> Option<usize> {
+    (0..26).rev().filter(|n| filter & (1 << n) == 0).next()
+}
+
+fn solve(words: &[Vec<Word>; 26], filter: u32, skipped: bool, i: usize) -> Vec<[Word; 5]> {
+    let mut solutions = Vec::new();
+    let letter = next_free_letter(filter).unwrap();
+    for word in words[letter].iter() {
+        if word.bitword & filter == 0 {
+            if i == 4 {
+                let mut solution: [Word; 5] = Default::default();
+                solution[4] = word.clone();
+                solutions.push(solution);
+            } else {
+                for mut solution in solve(words, filter | word.bitword, false, i + 1) {
+                    solution[i] = word.clone();
+                    solutions.push(solution);
+                }
+            }
+        }
+    }
+    if !skipped {
+        solutions.append(&mut solve(words, filter | 1 << letter, true, i));
+    }
+    solutions
 }
 
 fn main() -> Result<()> {
-    dbg!(words_from_file("words_alpha.txt")?.len());
+    let bytes = fs::read("words_alpha.txt")?;
+    let words = words(&bytes);
+    let solutions = solve(&words, 0, false, 0);
 
+    for solution in &solutions {
+        for word in &solution[0..3] {
+            print!("{word} ");
+        }
+        println!("{}", solution[4])
+    }
+    println!("len: {}", solutions.len());
     Ok(())
 }
