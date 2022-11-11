@@ -109,6 +109,7 @@ fn solve(words: &[Vec<Word>; 26], filter: u32, skipped: bool, i: usize) -> Vec<[
                 solutions.append(&mut solve(words, filter | 1 << letter, true, 4));
             }
         }
+        
         _ => {
             let letter = next_free_letter(filter).unwrap();
             for word in words[letter].iter() {
