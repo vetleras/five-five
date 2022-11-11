@@ -1,7 +1,8 @@
 use std::{
     cmp::max,
     fmt::{Debug, Display},
-    fs,
+    fs::{self, File},
+    io::Write, time::Instant,
 };
 
 use anyhow::{bail, Result};
@@ -60,13 +61,11 @@ fn words(bytes: &[u8]) -> [Vec<Word>; 26] {
         Some(b'\r') => &s[0..s.len() - 1],
         _ => s,
     });
-
     for line in lines {
         if let Ok((msl, word)) = Word::new(line) {
             words[msl as usize].push(word)
         }
     }
-
     for word_group in &mut words {
         word_group.sort();
         word_group.dedup();
@@ -86,17 +85,16 @@ fn solve(words: &[Vec<Word>; 26]) -> Vec<[Word; 5]> {
             solutions.push(solution);
         }
     }
-
     for word in words[24].iter() {
         for mut solution in solve14(words, word.bitword | 1 << 25, true, 1) {
             solution[0] = word.clone();
             solutions.push(solution);
         }
     }
-
     solutions
 }
 
+// the separation of solve and solve14 cuts execution time in half
 fn solve14(words: &[Vec<Word>; 26], filter: u32, skipped: bool, i: usize) -> Vec<[Word; 5]> {
     let mut solutions = Vec::new();
     let letter = next_free_letter(filter).unwrap();
@@ -121,16 +119,17 @@ fn solve14(words: &[Vec<Word>; 26], filter: u32, skipped: bool, i: usize) -> Vec
 }
 
 fn main() -> Result<()> {
+    let start = Instant::now();
+
     let bytes = fs::read("words_alpha.txt")?;
     let words = words(&bytes);
     let solutions = solve(&words);
 
-    for solution in &solutions {
-        for word in &solution[0..3] {
-            print!("{word} ");
-        }
-        println!("{}", solution[4])
+    let mut output = File::create("solution.txt")?;
+    for s in &solutions {
+        writeln!(output, "{} {} {} {} {}", s[0], s[1], s[2], s[3], s[4])?;
     }
-    println!("len: {}", solutions.len());
+    println!("{} solutions", solutions.len());
+    println!("{:.2} seconds", start.elapsed().as_secs_f32());
     Ok(())
 }
