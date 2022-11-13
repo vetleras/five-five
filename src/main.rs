@@ -164,7 +164,8 @@ fn main() -> Result<()> {
 
     let mut output = File::create("solution.txt")?;
     for s in &solutions {
-        writeln!(output, "{} {} {} {} {}", s[0], s[1], s[2], s[3], s[4])?;
+        let line = s.iter().map(|w| w.to_string()).join(" ");
+        writeln!(output, "{line}")?;
     }
     println!("{} solutions", solutions.len());
     println!("{:.2} seconds", start.elapsed().as_secs_f32());
