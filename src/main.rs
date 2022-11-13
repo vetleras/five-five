@@ -9,7 +9,7 @@ use std::{
 use anyhow::{bail, Result};
 use itertools::Itertools;
 
-#[derive(Eq, PartialOrd, Ord, Clone, Default)]
+#[derive(Clone, Default)]
 struct Word {
     bitword: u32,
     bytes: [u8; 5],
@@ -48,12 +48,6 @@ impl Word {
     }
 }
 
-impl PartialEq for Word {
-    fn eq(&self, other: &Self) -> bool {
-        self.bitword == other.bitword
-    }
-}
-
 impl Debug for Word {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:#b} {self}", self.bitword)
@@ -74,8 +68,8 @@ fn words(bytes: &[u8]) -> [Vec<Word>; 26] {
             _ => s,
         })
         .filter_map(|line| Word::new(line).ok())
-        .sorted_unstable() // sort for dedup
-        .dedup() // remove anagrams
+        .sorted_unstable_by_key(|w| w.bitword) // sort for dedup
+        .dedup_by(|w1, w2| w1.bitword == w2.bitword) // remove anagrams
         .collect();
 
     let mut freqs = [0; 26];
