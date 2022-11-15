@@ -155,7 +155,7 @@ fn main() -> Result<()> {
         .filter_map(|l| Word::new(l))
         .collect();
 
-    let output = File::create("solution.txt")?;
+    let output = File::create("solutions.txt")?;
     let solver = Solver::new(words, output);
     solver.solve();
 
