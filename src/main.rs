@@ -3,10 +3,13 @@ use std::{
     fmt::{Debug, Display},
     fs::{self, File},
     io::Write,
+    sync::{Arc, Mutex},
     time::Instant,
 };
 
-use anyhow::{bail, Result};
+use rayon::prelude::*;
+
+use anyhow::Result;
 use itertools::Itertools;
 
 #[derive(Clone, Default)]
@@ -16,14 +19,13 @@ struct Word {
 }
 
 impl Word {
-    fn new(bytes: &[u8]) -> Result<Word> {
-        let bytes: [u8; 5] = bytes.try_into()?;
+    fn new(bytes: &[u8]) -> Option<Word> {
+        let bytes: [u8; 5] = bytes.try_into().ok()?;
         let mut bitword = 0;
         let mut len = 0;
         for letter in bytes.iter().cloned() {
-            if letter < b'a' && letter > b'z' {
-                bail!("invalid letter {letter}")
-            }
+            debug_assert!(letter >= b'a');
+            debug_assert!(letter <= b'z');
             let offset = letter - b'a';
             if bitword & (1 << offset) == 0 {
                 bitword |= 1 << offset;
@@ -31,8 +33,8 @@ impl Word {
             }
         }
         match len {
-            5 => Ok(Word { bitword, bytes }),
-            _ => bail!("invalid bitword length {len}"),
+            5 => Some(Word { bitword, bytes }),
+            _ => None,
         }
     }
 
@@ -60,17 +62,9 @@ impl Display for Word {
     }
 }
 
-fn words(bytes: &[u8]) -> [Vec<Word>; 26] {
-    let words: Vec<Word> = bytes
-        .split(|b| *b == b'\n') // split on \n
-        .map(|s| match s.last() {
-            Some(b'\r') => &s[0..s.len() - 1], // strip \r
-            _ => s,
-        })
-        .filter_map(|line| Word::new(line).ok())
-        .sorted_unstable_by_key(|w| w.bitword) // sort for dedup
-        .dedup_by(|w1, w2| w1.bitword == w2.bitword) // remove anagrams
-        .collect();
+fn words_(mut words: Vec<Word>) -> [Vec<Word>; 26] {
+    words.par_sort_unstable_by_key(|w| w.bitword);
+    words.dedup_by_key(|w| w.bitword);
 
     let mut freqs = [0; 26];
     for word in &words {
@@ -105,62 +99,96 @@ fn next_free_letter(filter: u32) -> Option<usize> {
     (0..26).rev().filter(|n| filter & (1 << n) == 0).next()
 }
 
-fn solve(words: &[Vec<Word>; 26], output: &mut File) {
-    let mut solution = Vec::with_capacity(5);
-    for word in words[25].iter() {
-        solution.push(word.clone());
-        solve14(words, false, word.bitword, output, &mut solution);
-        solution.pop();
-    }
-    for word in words[24].iter() {
-        solution.push(word.clone());
-        solve14(words, true, word.bitword | 1 << 25, output, &mut solution);
-        solution.pop();
-    }
-}
-
 fn solve14(
     words: &[Vec<Word>; 26],
     skipped: bool,
     filter: u32,
-    output: &mut File,
-    solution: &mut Vec<Word>,
+    output: &Arc<Mutex<File>>,
+    solution: &mut [Word; 5],
+    i: usize,
 ) {
     let letter = next_free_letter(filter).unwrap();
-    match solution.len() {
+    match i {
         4 => {
             for word in words[letter].iter() {
                 if word.bitword & filter == 0 {
-                    writeln!(output, "{} {} {} {} {word}", solution[0], solution[1], solution[2], solution[3]).unwrap();
+                    let mut file = output.lock().unwrap();
+                    writeln!(
+                        file,
+                        "{} {} {} {} {word}",
+                        solution[0], solution[1], solution[2], solution[3]
+                    )
+                    .unwrap();
                 }
             }
         }
         _ => {
             for word in words[letter].iter() {
                 if word.bitword & filter == 0 {
-                    solution.push(word.clone());
-                    solve14(words, skipped, filter | word.bitword, output, solution);
-                    solution.pop();
+                    solution[i] = word.clone();
+                    solve14(
+                        words,
+                        skipped,
+                        filter | word.bitword,
+                        output,
+                        solution,
+                        i + 1,
+                    );
                 }
             }
         }
     }
     if !skipped {
-        solve14(words, true, filter | 1 << letter, output, solution);
+        solve14(words, true, filter | 1 << letter, output, solution, i);
     }
 }
 
 fn main() -> Result<()> {
     let start = Instant::now();
-    let bytes = fs::read("words_alpha.txt")?;
-    let words = words(&bytes);
+    let words = load_words("words_alpha.txt")?;
+    let loaded = Instant::now();
 
-    let mut output = File::create("solution.txt")?;
+    let transformed_words = words_(words);
+    let transformed = Instant::now();
 
-    let start_search = Instant::now();
-    solve(&words, &mut output);
+    let output = File::create("solution.txt")?;
+    solve(&transformed_words, output);
 
-    println!("total  {} ms", start.elapsed().as_millis());
-    println!("search {} ms", start_search.elapsed().as_millis());
+    println!(
+        "loading words     {} us",
+        loaded.duration_since(start).as_micros()
+    );
+    println!(
+        "transformed words {} us",
+        transformed.duration_since(loaded).as_micros()
+    );
+    println!("solved            {} ms", transformed.elapsed().as_millis());
+    println!("total             {} ms", start.elapsed().as_millis());
     Ok(())
+}
+
+fn load_words(filepath: &str) -> Result<Vec<Word>> {
+    Ok(fs::read(filepath)?
+        .par_split(|b| *b == b'\n')
+        .filter_map(|l| Word::new(l))
+        .collect())
+}
+
+fn solve(words: &[Vec<Word>; 26], output_file: File) {
+    let output_mtx = Arc::new(Mutex::new(output_file));
+
+    words[25].par_iter().for_each(|word| {
+        let mut solution: [Word; 5] = Default::default();
+        solution[0] = word.clone();
+        let output = Arc::clone(&output_mtx);
+        solve14(words, false, word.bitword, &output, &mut solution, 1);
+    });
+
+    words[24].par_iter().for_each(|word| {
+        let mut solution: [Word; 5] = Default::default();
+        solution[0] = word.clone();
+        let output = Arc::clone(&output_mtx);
+        let filter = word.bitword | 1 << 25;
+        solve14(words, true, filter, &output, &mut solution, 1);
+    });
 }
