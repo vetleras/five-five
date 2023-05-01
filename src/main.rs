@@ -39,7 +39,7 @@ impl Word {
     fn transform(mut self, t: [usize; 26]) -> (usize, Self) {
         let mut msl = 0; // most significant letter
         self.bitword = 0;
-        for letter in self.bytes.iter().cloned() {
+        for letter in self.bytes {
             let offset = t[(letter - b'a') as usize];
             msl = max(msl, offset);
             self.bitword |= 1 << offset;
