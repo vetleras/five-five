@@ -87,7 +87,7 @@ fn create_word_index(mut words: Vec<Word>) -> WordIndex {
         .enumerate()
         .sorted_unstable_by_key(|(_i_transformed, i_letter)| *i_letter) // sort again, s.t. the letter corresponds with index in transform
         .map(|(i_transformed, _i_letter)| i_transformed)
-        .collect::<Vec<_>>()
+        .collect_vec()
         .try_into()
         .unwrap();
 
